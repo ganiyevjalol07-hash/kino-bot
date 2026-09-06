@@ -33,7 +33,7 @@ async def ask_ai(question: str) -> str:
     try:
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=question,
         )
         return response.text or "Kechirasiz, javob topa olmadim."
