@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sqlite3
 
 from aiogram import Bot, Dispatcher, F
@@ -7,9 +8,12 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 # ============ SOZLAMALAR ============
-BOT_TOKEN = "8978959722:AAF39wYJJ2ZcbOO1NGbXClNs3krsg8yFq6k"   # @BotFather dan olingan
+# Railway'da "Variables" bo'limiga BOT_TOKEN nomi bilan tokenni kiritasiz.
+# Agar mahalliy kompyuterda sinamoqchi bo'lsangiz, pastdagi "yoki" qismidagi
+# tokenni ishlating.
+BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8978959722:AAF39wYJJ2ZcbOO1NGbXClNs3krsg8yFq6k"
 ADMIN_IDS = [8241969249]                      # Jaloliddin - admin
-DB_PATH = "movies.db"
+DB_PATH = os.environ.get("DB_PATH", "movies.db")
 # =====================================
 
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +23,10 @@ dp = Dispatcher()
 
 
 def init_db():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
@@ -28,8 +36,39 @@ def init_db():
             title TEXT
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY
+        )
+    """)
     conn.commit()
     conn.close()
+
+
+def add_user(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_users_count() -> int:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users")
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
+
+
+def get_movies_count() -> int:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM movies")
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
 
 
 def save_movie(code: str, file_id: str, title: str = ""):
@@ -59,10 +98,28 @@ def is_admin(user_id: int) -> bool:
 # ------------- /start -------------
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    add_user(message.from_user.id)
     await message.answer(
         "Salom! 🎬\n\n"
         "Film kodini yuboring, men sizga filmni topib beraman.\n"
         "Masalan: <b>001</b>",
+        parse_mode="HTML",
+    )
+
+
+# ------------- /stats (faqat admin uchun) -------------
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    users_count = get_users_count()
+    movies_count = get_movies_count()
+
+    await message.answer(
+        f"📊 <b>Statistika</b>\n\n"
+        f"👤 Foydalanuvchilar soni: <b>{users_count}</b>\n"
+        f"🎬 Filmlar soni: <b>{movies_count}</b>",
         parse_mode="HTML",
     )
 
@@ -100,6 +157,7 @@ async def handle_video(message: Message):
 # ------------- Foydalanuvchi: kod yuboradi -------------
 @dp.message(F.text)
 async def handle_code(message: Message):
+    add_user(message.from_user.id)
     code = message.text.strip()
     row = get_movie(code)
 
