@@ -6,6 +6,7 @@ import sqlite3
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.filters import Command
+from google import genai
 
 # ============ SOZLAMALAR ============
 # Railway'da "Variables" bo'limiga BOT_TOKEN nomi bilan tokenni kiritasiz.
@@ -14,12 +15,31 @@ from aiogram.filters import Command
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8978959722:AAF39wYJJ2ZcbOO1NGbXClNs3krsg8yFq6k"
 ADMIN_IDS = [8241969249]                      # Jaloliddin - admin
 DB_PATH = os.environ.get("DB_PATH", "movies.db")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # =====================================
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+
+async def ask_ai(question: str) -> str:
+    if not gemini_client:
+        return "Kechirasiz, AI hozircha sozlanmagan."
+
+    try:
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=question,
+        )
+        return response.text or "Kechirasiz, javob topa olmadim."
+    except Exception:
+        logging.exception("Gemini xatosi")
+        return "Kechirasiz, hozir javob bera olmadim. Birozdan keyin qayta urinib ko'ring."
 
 
 def init_db():
@@ -102,7 +122,8 @@ async def cmd_start(message: Message):
     await message.answer(
         "Salom! 🎬\n\n"
         "Film kodini yuboring, men sizga filmni topib beraman.\n"
-        "Masalan: <b>001</b>",
+        "Masalan: <b>001</b>\n\n"
+        "Yoki menga istalgan savolingizni yozing — javob beraman! 🤖",
         parse_mode="HTML",
     )
 
@@ -154,20 +175,23 @@ async def handle_video(message: Message):
     await message.answer(f"✅ Film saqlandi!\nKod: <b>{code}</b>\nNomi: {title or '—'}", parse_mode="HTML")
 
 
-# ------------- Foydalanuvchi: kod yuboradi -------------
+# ------------- Foydalanuvchi: kod yuboradi yoki savol beradi -------------
 @dp.message(F.text)
 async def handle_code(message: Message):
     add_user(message.from_user.id)
-    code = message.text.strip()
-    row = get_movie(code)
+    text = message.text.strip()
+    row = get_movie(text)
 
-    if row is None:
-        await message.answer("❌ Bunday kodli film topilmadi. Kodni tekshirib qayta yuboring.")
+    if row is not None:
+        file_id, title = row
+        caption = title if title else f"Kod: {text}"
+        await message.answer_video(video=file_id, caption=caption)
         return
 
-    file_id, title = row
-    caption = title if title else f"Kod: {code}"
-    await message.answer_video(video=file_id, caption=caption)
+    # Film kodi topilmadi — buni savol deb hisoblab, AI orqali javob beramiz
+    await bot.send_chat_action(message.chat.id, "typing")
+    answer = await ask_ai(text)
+    await message.answer(answer)
 
 
 async def main():
